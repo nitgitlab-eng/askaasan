@@ -1,0 +1,17 @@
+# Weekly update PRs for every dependency source; security fixes arrive as soon as an advisory is published.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /api
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm  # pnpm-lock.yaml is understood by the npm ecosystem
+    directory: /web
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: docker
+    directory: /infra
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

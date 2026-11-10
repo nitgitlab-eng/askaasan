@@ -1,0 +1,21 @@
+# gitleaks config: the default rules, plus narrow allowlists for known non-secrets.
+# Run locally: `gitleaks detect --source . --config .gitleaks.toml` (CI runs the same, pinned, on every push/PR).
+# Keep these allowlists narrow. A real secret must never be allowlisted: rotate it, then rewrite history if needed.
+[extend]
+useDefault = true
+
+# Test fixtures use obviously fake keys and passwords ("test_secret_abc123", "x-Strong-pass-123", ...).
+# Only the catch-all generic-api-key rule is silenced under api/tests/; the provider-specific rules (AWS, GitHub,
+# Stripe, private keys, ...) still fire there.
+[[allowlists]]
+description = "Fake keys and passwords in API test fixtures"
+targetRules = ["generic-api-key"]
+paths = ['''^api/tests/''']
+
+[[allowlists]]
+description = "CI-only keys (documented as not secrets in ci.yml) and a non-secret alphabet constant"
+regexTarget = "line"
+regexes = [
+  '''AASAN_SECRETS_KEY: KPXJyj4_qm_XwKaI4LPIZOrIt_SAhn5Fl8o-Fjxd-iM=''',
+  '''KEY_ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"''',
+]

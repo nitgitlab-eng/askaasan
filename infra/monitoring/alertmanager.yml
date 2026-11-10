@@ -1,0 +1,16 @@
+# Template: the ALERT_* placeholders are filled from infra/.env when the container starts.
+route:
+  receiver: email
+  group_by: [alertname]
+  group_wait: 1m
+  repeat_interval: 4h
+receivers:
+  - name: email
+    email_configs:
+      - to: ALERT_EMAIL_TO
+        from: ALERT_EMAIL_FROM
+        smarthost: ALERT_SMTP_HOST
+        auth_username: ALERT_SMTP_USER
+        auth_password: ALERT_SMTP_PASSWORD
+        require_tls: false
+        send_resolved: true

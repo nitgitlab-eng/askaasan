@@ -1,0 +1,38 @@
+from django.urls import path
+
+from . import about, assist, checkpoints, explainer, journey, planner, progress, pulse, today
+
+urlpatterns = [
+    path("activities/<int:pk>/hint/", assist.activity_hint),
+    path("activities/<int:pk>/hints/", assist.activity_hints_used),
+    path("explain/", assist.explain),
+    path("today/", today.today),
+    path("today/focus/", today.today_focus),
+    path("today/swap/", today.today_swap),
+    path("today/done/", today.today_done),
+    path("today/circuit/", today.today_circuit),
+    path("revision-board/", today.revision_board),
+    path("blocks/", planner.blocks),
+    path("blocks/<int:pk>/", planner.block_action),
+    path("pauses/", planner.pauses),
+    path("pauses/<int:pk>/", planner.pause_detail),
+    path("buddies/", planner.buddies),
+    path("buddies/<int:pk>/", planner.buddy_detail),
+    path("buddy/<str:token>/", planner.buddy_accept),
+    path("progress/", progress.progress),
+    path("progress/insights/", progress.insights),
+    path("progress/ask/", progress.ask),
+    path("lessons/<int:pk>/explainer/", explainer.explainer),
+    path("lessons/<int:pk>/podcast/", journey.podcast),
+    path("lessons/<int:pk>/listened/", journey.listened),
+    path("lessons/<int:pk>/fast-track/", journey.fast_track),
+    path("fast-track/<int:run_id>/submit/", journey.fast_track_submit),
+    path("courses/<int:pk>/listened/", journey.course_listened),
+    path("course-order/", journey.course_order),
+    path("course-order/suggest/", journey.course_order_suggest),
+    path("lessons/<int:pk>/pulse/", pulse.pulse),
+    path("about/", about.about),
+    path("courses/<int:pk>/checkpoint/", checkpoints.checkpoint),
+    path("courses/<int:pk>/checkpoint/submit/", checkpoints.checkpoint_submit),
+    path("checkpoints/", checkpoints.my_checkpoints),
+]

@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+api/db.sqlite3
+api/.env
+api/staticfiles/
+.pytest_cache/
+.ruff_cache/
+# Node
+node_modules/
+web/dist/
+*.log
+.DS_Store
+
+# Uploaded / generated lesson images (Docker keeps them in a volume)
+api/media/
+
+# Secrets: never commit any env file except the template
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+# Staging compose settings (template: infra/staging.env.example)
+*.env
+!*.env.example
+
+# Local tooling
+.claude/settings.local.json
+web/public/__tok.json
+backups/
+drill/
+*.dump
+*.age
+aasan-backup.key
+infra/walg-keys/*
+!infra/walg-keys/.gitkeep
+coverage/
+.coverage
+htmlcov/
+# Agent worktrees (temporary checkouts, never part of the repo)
+.claude/worktrees/
+# Private keys and certificates (never commit; keep them outside the repo)
+Key/
+*.pem
+*.key
+id_rsa*
+id_ed25519*

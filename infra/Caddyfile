@@ -1,0 +1,14 @@
+# HTTPS for askaasan.com (Caddy gets and renews Let's Encrypt certificates on its own).
+# Run Caddy on the same host as the docker stack: `caddy run --config infra/Caddyfile`, or install it as a service
+# and copy this file to /etc/caddy/Caddyfile. Ports 80 and 443 must be open; `web` stays bound to 127.0.0.1:8080.
+
+askaasan.com {
+	encode zstd gzip
+	# WebSockets (/ws/, /livekit/) pass straight through; nginx in `web` does the routing.
+	reverse_proxy 127.0.0.1:8080
+}
+
+# One canonical address: passkeys and sign-in cookies are tied to askaasan.com.
+www.askaasan.com {
+	redir https://askaasan.com{uri} permanent
+}

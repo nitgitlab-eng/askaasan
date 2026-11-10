@@ -1,0 +1,73 @@
+# Monitoring overlay: Prometheus (scrapes the API's /api/metrics/), Alertmanager (emails the alerts), Grafana
+# (dashboards) and Loki + Promtail (every container's logs, kept 90 days, searchable in Grafana).
+#   1. Put METRICS_TOKEN (e.g. `openssl rand -hex 24`) in infra/.env, and the same value in infra/monitoring/metrics_token
+#      (one line, chmod 600). Fill ALERT_* and GRAFANA_ADMIN_PASSWORD in infra/.env.
+#   2. docker compose -f infra/docker-compose.yml -f infra/docker-compose.monitoring.yml up -d
+#   3. Grafana: ssh -L 3000:127.0.0.1:3000 <host>, then http://localhost:3000 (Prometheus and Loki are pre-added).
+# Nothing here publishes a public port. Rules: infra/monitoring/alerts.yml. See docs/DEPLOY.md "Monitoring".
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/metrics_token:/etc/prometheus/metrics_token:ro
+      - promdata:/prometheus
+    depends_on: [api, alertmanager]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    # Alertmanager doesn't read env vars, so the mail settings are written into its config at start.
+    command:
+      - |
+        sed -e "s|ALERT_EMAIL_TO|$$ALERT_EMAIL_TO|; s|ALERT_EMAIL_FROM|$$ALERT_EMAIL_FROM|; s|ALERT_SMTP_HOST|$$ALERT_SMTP_HOST|; s|ALERT_SMTP_USER|$$ALERT_SMTP_USER|; s|ALERT_SMTP_PASSWORD|$$ALERT_SMTP_PASSWORD|" \
+          /etc/alertmanager/template.yml > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    environment:
+      ALERT_EMAIL_TO: "${ALERT_EMAIL_TO:?set ALERT_EMAIL_TO in infra/.env}"
+      ALERT_EMAIL_FROM: "${ALERT_EMAIL_FROM:-alerts@localhost}"
+      ALERT_SMTP_HOST: "${ALERT_SMTP_HOST:-mailpit:1025}"
+      ALERT_SMTP_USER: "${ALERT_SMTP_USER:-}"
+      ALERT_SMTP_PASSWORD: "${ALERT_SMTP_PASSWORD:-}"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/template.yml:ro
+
+  loki:
+    image: grafana/loki:3.2.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - lokidata:/loki
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in infra/.env}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/aasan.yml:ro
+      - grafanadata:/var/lib/grafana
+    depends_on: [prometheus, loki]
+
+volumes:
+  promdata:
+  lokidata:
+  grafanadata:

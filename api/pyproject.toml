@@ -1,0 +1,79 @@
+[project]
+name = "aasan-api"
+version = "1.3.0"
+description = "Aasan API: Django + DRF + Channels backend for the Aasan AI learning app (tutor, courses, schools, billing)"
+readme = "README.md"
+requires-python = ">=3.12"
+# Ranges are minimums on purpose; uv.lock is authoritative. Docker and CI install with `uv sync --frozen`, so a release
+# never picks up an unplanned upgrade. Upgrade deliberately with `uv lock --upgrade-package <name>` and run the tests.
+dependencies = [
+    "anthropic>=1.14.0",
+    "celery>=5.6.3",
+    "channels-redis>=4.3.0",
+    "channels[daphne]>=4.3.2",
+    "cryptography>=50.0.2",
+    "dj-database-url>=3.1.2",
+    "django>=5.2,<6",
+    "django-cors-headers>=4.9.0",
+    "djangorestframework>=3.18.3",
+    "djangorestframework-simplejwt>=5.5.1",
+    "dnspython>=2.9.0",
+    "google-auth>=2.62.0",
+    "google-genai>=2.31.0",
+    "gunicorn>=23.0.0",
+    "httpx>=0.28.1",
+    "livekit-agents==1.8.9",
+    "livekit-api==1.2.2",
+    "livekit-plugins-sarvam==1.8.9",
+    "livekit-plugins-silero==1.8.9",
+    "livekit-plugins-turn-detector==1.8.9",
+    "openai>=3.31.0",
+    "openpyxl==3.1.5",
+    "pillow>=12.3.0",
+    "psycopg[binary,pool]>=3.3.6",
+    "pydantic>=2.14.1",
+    "pypdf>=6.20.1",
+    "python-docx>=1.2.0",
+    "python-dotenv>=1.2.4",
+    "python-pptx==1.0.2",
+    "pywebpush>=2.0",
+    "pyyaml==6.0.3",
+    "redis>=8.1.0",
+    "reportlab==4.4.3",
+    "sentry-sdk>=2.72.0",
+    "uharfbuzz>=0.56.3",
+    "uvicorn-worker>=0.3.0",
+    "uvicorn[standard]>=0.35.0",
+    "webauthn>=3.0.1",
+    "websockets>=16.1.1",  # Deepgram live (ws/voice-stream/); also pulled in by uvicorn[standard]
+    "whitenoise>=6.12.0",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-django>=4.14.0",
+    "ruff>=0.17.1",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+
+# Static security scan (CI: `uv run bandit -c pyproject.toml -r . --severity-level medium --confidence-level medium`).
+# Findings that are safe by design carry `# nosec BXXX`, with the reason in a comment on the line above.
+[tool.bandit]
+exclude_dirs = ["tests", "migrations", ".venv"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+# RUF012 flags Pydantic/Django class attributes (field defaults, Meta) — false positives here.
+ignore = ["RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["RUF059", "S110"]

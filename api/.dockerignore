@@ -1,0 +1,16 @@
+# Docker reads this file, not .gitignore. Keep secrets, local data and host-built environments out of the image.
+.env
+.env.*
+!.env.example
+db.sqlite3
+db.sqlite3-*
+media/
+staticfiles/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store

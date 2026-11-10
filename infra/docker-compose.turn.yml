@@ -1,0 +1,12 @@
+# Production add-on for live voice: LiveKit's built-in TURN server, so learners behind firewalls that block UDP can
+# still join calls (TURN over TLS on 5349, TURN over UDP on 3478).
+#
+#   1. DNS: an A record for LIVEKIT_TURN_DOMAIN (e.g. turn.example.com) pointing at this server.
+#   2. A certificate for that name in ${LIVEKIT_TURN_CERTS}: turn.crt (full chain) and turn.key.
+#   3. infra/.env: LIVEKIT_TURN_ENABLED=true, LIVEKIT_TURN_DOMAIN=turn.example.com, LIVEKIT_TURN_CERTS=/etc/aasan/turn
+#   4. Firewall: open 5349/tcp and 3478/udp (plus 7881/tcp and 7882/udp for media).
+#   5. docker compose -f infra/docker-compose.yml -f infra/docker-compose.turn.yml --profile voice up -d
+services:
+  livekit:
+    ports: ["5349:5349", "3478:3478/udp"]
+    volumes: ["${LIVEKIT_TURN_CERTS:?set LIVEKIT_TURN_CERTS to the folder holding turn.crt and turn.key}:/certs:ro"]

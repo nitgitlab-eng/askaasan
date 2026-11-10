@@ -1,0 +1,12 @@
+# web.Dockerfile builds from the repo root: send only what it COPYs (web/ sources and the nginx config).
+*
+!web/
+!infra/nginx/
+web/node_modules/
+web/dist/
+web/coverage/
+web/public/__tok.json
+**/.DS_Store
+**/.env
+**/.env.*
+web/public/pyodide/v*/

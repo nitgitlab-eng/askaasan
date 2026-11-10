@@ -1,0 +1,305 @@
+# Production-like stack: Postgres, Redis (broker + channels) and a Redis cache, a one-shot migrate job, the API
+# (gunicorn + uvicorn workers), the Celery worker and beat, mailpit (local inbox) and web (nginx).
+#   1. cd api && uv run python manage.py setup_env      # api/.env with a generated DJANGO_SECRET_KEY + AASAN_SECRETS_KEY
+#   2. cp infra/.env.example infra/.env and fill in POSTGRES_PASSWORD and REDIS_PASSWORD (e.g. `openssl rand -hex 24`)
+#      and TAG (TAG=dev for a local build; a release tag such as v1.3.0 to run a published image)
+#   3. docker compose -f infra/docker-compose.yml up --build -d    # then open http://localhost:8080
+#      Production pulls instead of building: `pull` then `up -d --no-build` (docs/DEPLOY.md, "Deploy from registry").
+#   Staging (fake AI, Razorpay test keys, own ports): add `-f infra/docker-compose.staging.yml`.
+#      Mail the app sends lands in mailpit: http://localhost:8025
+#   Load test (fake AI with real-model latency): add `-f infra/docker-compose.loadtest.yml` to the command above.
+# Only `web` (nginx) publishes a public port; mailpit publishes on 127.0.0.1 only. Postgres, Redis and the API are
+# reachable only inside the compose network, so X-Forwarded-For always comes from nginx (DJANGO_NUM_PROXIES=1).
+# In production put HTTPS in front of `web`, set DJANGO_SECURE_SSL_REDIRECT=true and set FRONTEND_URL / WEBAUTHN_* /
+# DJANGO_ALLOWED_HOSTS and real SMTP (EMAIL_*) in infra/.env. See docs/DEPLOY.md.
+# Settings every app container shares (migrate, api, worker, beat). Services add or override keys with `<<: *env`.
+x-env: &env
+  DATABASE_URL: "postgres://aasan:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@db:5432/aasan"
+  # Redis roles: broker (DB 0) and channel layer (DB 2) on `redis` (never evicts); cache (DB 1) on `redis-cache`.
+  REDIS_URL: "redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}@redis:6379/0"
+  CHANNELS_REDIS_URL: "redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}@redis:6379/2"
+  CACHE_REDIS_URL: "redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}@redis-cache:6379/1"  # throttles + login lockout, shared by every process
+  DJANGO_DEBUG: "false"  # every service, whatever api/.env says (worker and beat included)
+  DJANGO_ALLOWED_HOSTS: "${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,api,web}"
+  DJANGO_NUM_PROXIES: "${DJANGO_NUM_PROXIES:-1}"  # nginx; use 2 behind a cloud load balancer
+  # Plain-HTTP localhost has no TLS; set true when HTTPS is in front.
+  DJANGO_SECURE_SSL_REDIRECT: "${DJANGO_SECURE_SSL_REDIRECT:-false}"
+  # The browser origin is nginx on :8080, not the Vite dev server on :5173 (passkeys and email links need it).
+  FRONTEND_URL: "${FRONTEND_URL:-http://localhost:8080}"
+  WEBAUTHN_ORIGIN: "${WEBAUTHN_ORIGIN:-http://localhost:8080}"
+  WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
+  # Database connection pool per process; see "Scaling knobs" in docs/DEPLOY.md for the connection budget.
+  DB_POOL_MIN: "${DB_POOL_MIN:-2}"
+  DB_POOL_MAX: "${DB_POOL_MAX:-10}"
+  DB_STATEMENT_TIMEOUT_MS: "${DB_STATEMENT_TIMEOUT_MS:-30000}"
+  # /api/metrics/ bearer token for the monitoring overlay (docker-compose.monitoring.yml); empty = endpoint off.
+  METRICS_TOKEN: "${METRICS_TOKEN:-}"
+  # Mail: the local mailpit inbox unless infra/.env points EMAIL_* at a real SMTP server.
+  # (Admin console → Email (SMTP) still wins over these once it is configured.)
+  EMAIL_BACKEND: "${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}"
+  EMAIL_HOST: "${EMAIL_HOST:-mailpit}"
+  EMAIL_PORT: "${EMAIL_PORT:-1025}"
+  EMAIL_HOST_USER: "${EMAIL_HOST_USER:-}"
+  EMAIL_HOST_PASSWORD: "${EMAIL_HOST_PASSWORD:-}"
+  EMAIL_USE_TLS: "${EMAIL_USE_TLS:-false}"
+  EMAIL_USE_SSL: "${EMAIL_USE_SSL:-false}"
+  DEFAULT_FROM_EMAIL: "${DEFAULT_FROM_EMAIL:-Aasan <no-reply@aasan.local>}"
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  # Live voice: the self-hosted LiveKit below (`--profile voice`). Locally it runs in dev mode with its built-in key
+  # pair (devkey / secret), so nothing has to be set; production sets its own pair in infra/.env.
+  LIVEKIT_URL: "${LIVEKIT_URL-ws://livekit:7880}"
+  LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://localhost:8080/livekit}"
+  LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-devkey}"
+  LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-secret}"
+
+x-api: &api
+  build: { context: ../api, dockerfile: ../infra/api.Dockerfile }
+  # Production pulls a released image: AASAN_IMAGE_PREFIX=ghcr.io/<owner>/aasan and TAG=v1.3.0 in infra/.env
+  # (built by .github/workflows/release-images.yml). Local builds: TAG=dev and `up --build`.
+  image: "${AASAN_IMAGE_PREFIX:-aasan}-api:${TAG:?set TAG in infra/.env to a release tag (e.g. v1.3.0), or TAG=dev for a local build}"
+  env_file: ../api/.env
+  environment: *env
+  volumes: [mediafiles:/app/media]
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aasan
+      POSTGRES_DB: aasan
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}"
+    # Sized for a 16 GB host shared with the app. On a dedicated 16 GB database server use
+    # PG_SHARED_BUFFERS=4GB and PG_EFFECTIVE_CACHE_SIZE=12GB.
+    command:
+      - postgres
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-300}
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-4GB}
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - idle_in_transaction_session_timeout=60000
+    shm_size: 512mb  # parallel queries use /dev/shm (Docker's default is 64 MB)
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aasan -d aasan"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  # Celery broker + Channels layer. noeviction: a full broker refuses new writes instead of silently dropping queued
+  # tasks. Append-only file so queued tasks survive a restart.
+  redis:
+    image: redis:7-alpine
+    # The password is passed through the environment so it never shows in `ps` output.
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}"
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory ${REDIS_MAXMEMORY:-512mb} --maxmemory-policy noeviction --appendonly yes --appendfsync everysec
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  # Cache (throttles, lockouts, mail caps): evicts least-recently-used keys when full; nothing on disk.
+  redis-cache:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}"
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory ${REDIS_CACHE_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  # Local inbox for every email the app sends (UI on http://localhost:8025). Replace with real SMTP via EMAIL_*.
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    ports: ["127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025", "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"]
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  # Runs once per `up` and exits; the long-running services start only after it succeeds, so a single process migrates.
+  migrate:
+    <<: *api
+    command: python manage.py migrate --noinput
+    environment:
+      <<: *env
+      DB_STATEMENT_TIMEOUT_MS: "0"  # a migration on a big table may take longer than the request cap
+      DB_LOCK_TIMEOUT_MS: "${MIGRATE_LOCK_TIMEOUT_MS:-5000}"  # give up (and retry later) rather than block live traffic
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "2"
+    healthcheck: { disable: true }
+    restart: "no"
+    depends_on:
+      db: { condition: service_healthy }
+  api:
+    <<: *api
+    # Fallback single-process server: API_COMMAND="daphne -b 0.0.0.0 -p 8000 config.asgi:application" in infra/.env.
+    command: ${API_COMMAND:-gunicorn -c config/gunicorn_conf.py config.asgi:application}
+    environment:
+      <<: *env
+      # gunicorn processes; 0 = min(2 x CPU + 1, 9). Each holds a DB pool of up to DB_POOL_MAX connections.
+      WEB_CONCURRENCY: "${WEB_CONCURRENCY:-0}"
+    # Readiness: the database, the cache and the channel layer all answer (503 otherwise). nginx waits for it.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready/', timeout=8)"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    stop_grace_period: 40s  # longer than gunicorn's graceful_timeout (30 s)
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      redis-cache: { condition: service_healthy }
+  worker:
+    <<: *api
+    command: celery -A config worker -l info
+    environment:
+      <<: *env
+      # Each Celery child is its own process with its own small pool.
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "${WORKER_DB_POOL_MAX:-3}"
+      DB_STATEMENT_TIMEOUT_MS: "${WORKER_DB_STATEMENT_TIMEOUT_MS:-120000}"
+      CELERY_CONCURRENCY: "${CELERY_CONCURRENCY:-4}"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME --timeout 10 | grep -q pong"]
+      interval: 30s
+      timeout: 25s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 60s  # lets running tasks finish (acks_late hands unfinished ones back to the queue)
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      redis-cache: { condition: service_healthy }
+  beat:
+    <<: *api
+    # The schedule file lives on a volume, so a restart remembers when each periodic job last ran.
+    command: celery -A config beat -l info --schedule /var/lib/celery/celerybeat-schedule
+    environment:
+      <<: *env
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "2"
+    volumes: [mediafiles:/app/media, celerybeat:/var/lib/celery]
+    # Beat rewrites its schedule file at least every few minutes while it is alive and ticking.
+    healthcheck:
+      test: ["CMD-SHELL", "find /var/lib/celery -name 'celerybeat-schedule*' -mmin -15 | grep -q ."]
+      interval: 60s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+  # Live voice: the WebRTC media server, and Aasan's voice agent (listens and speaks with Sarvam). Started with
+  # `--profile voice`; signalling goes through nginx (/livekit/), media over UDP 7882 (TCP 7881 when UDP is blocked).
+  # LIVEKIT_NODE_IP is the address browsers reach for media: 127.0.0.1 locally, the server's public IP in production.
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    profiles: [voice]
+    command: --bind 0.0.0.0 --node-ip ${LIVEKIT_NODE_IP:-127.0.0.1}
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: ${LIVEKIT_TCP_PORT:-7881}
+          udp_port: ${LIVEKIT_UDP_PORT:-7882}
+          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP:-false}
+        room:
+          empty_timeout: 30
+        # Built-in TURN for learners on networks that block UDP (offices, some mobile carriers): TURN/TLS on 5349.
+        # Off locally. Production: LIVEKIT_TURN_ENABLED=true + LIVEKIT_TURN_DOMAIN in infra/.env and add
+        # -f docker-compose.turn.yml (publishes the ports, mounts the certificate). See docs/DEPLOY.md.
+        turn:
+          enabled: ${LIVEKIT_TURN_ENABLED:-false}
+          domain: "${LIVEKIT_TURN_DOMAIN:-}"
+          tls_port: 5349
+          udp_port: 3478
+          cert_file: /certs/turn.crt
+          key_file: /certs/turn.key
+    # Same number inside and out: LiveKit tells browsers these ports. Change both if another LiveKit has them.
+    ports: ["${LIVEKIT_TCP_PORT:-7881}:${LIVEKIT_TCP_PORT:-7881}", "${LIVEKIT_UDP_PORT:-7882}:${LIVEKIT_UDP_PORT:-7882}/udp"]
+    healthcheck:  # the server answers "OK" on its signalling port
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7880/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+  voice-agent:
+    <<: *api
+    profiles: [voice]
+    command: python manage.py run_voice_agent start
+    environment:
+      <<: *env
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "3"
+    healthcheck:  # the agents worker serves its own health page on :8081
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/', timeout=4)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 60s  # calls in progress get time to end
+    # One process per call (200–400 MB each): a cap keeps a burst of calls from starving the API on the same host.
+    mem_limit: ${VOICE_AGENT_MEMORY:-4g}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      livekit: { condition: service_healthy }
+  web:
+    build: { context: .., dockerfile: infra/web.Dockerfile }
+    image: "${AASAN_IMAGE_PREFIX:-aasan}-web:${TAG:?set TAG in infra/.env to a release tag (e.g. v1.3.0), or TAG=dev for a local build}"
+    # Localhost only by default: the TLS proxy (Caddy) on this host sits in front. WEB_BIND=0.0.0.0 to open it up
+    # (only behind a firewall that admits just the load balancer).
+    ports: ["${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"]
+    # Lesson images and lecture media are served by nginx straight from the volume (read-only).
+    volumes: [mediafiles:/srv/media:ro]
+    # Through nginx to the API's readiness check: green only when the whole request path works.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/health/ready/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+volumes:
+  pgdata:
+  mediafiles:
+  redisdata:
+  celerybeat:

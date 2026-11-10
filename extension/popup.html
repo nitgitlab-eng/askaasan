@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Aasan Companion</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="top">
+    <img src="icons/icon32.png" alt="" width="24" height="24">
+    <h1>Aasan Companion</h1>
+    <span id="who" class="who"></span>
+  </header>
+
+  <main id="app">
+    <!-- Not paired -->
+    <section id="view-pair" hidden>
+      <p class="lead">Connect this browser to your Aasan account.</p>
+      <ol class="steps">
+        <li>In Aasan, open <b>Account → Browser companion</b> and click <b>Connect the extension</b>.</li>
+        <li>Type the 6-digit code here.</li>
+      </ol>
+      <form id="pair-form" autocomplete="off">
+        <label for="code" class="sr-only">Pairing code</label>
+        <input id="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" placeholder="123456" required>
+        <button type="submit" class="primary" id="pair-btn">Connect</button>
+      </form>
+      <p class="muted small">You never type your password here.</p>
+    </section>
+
+    <!-- Paired: tasks -->
+    <section id="view-tasks" hidden>
+      <div class="row between">
+        <p class="small muted" id="tab-info"></p>
+        <button type="button" class="link" id="refresh">Refresh</button>
+      </div>
+      <p id="empty" class="muted" hidden>No open browser tasks. Start a lesson with a browser task in Aasan and it will show up here.</p>
+      <ul id="task-list" class="tasks"></ul>
+    </section>
+
+    <!-- Result -->
+    <section id="view-result" hidden>
+      <div id="result-card" class="result">
+        <p id="result-score" class="score"></p>
+        <p id="result-verdict" class="verdict"></p>
+        <p id="result-feedback"></p>
+      </div>
+      <div class="row">
+        <button type="button" id="open-lesson" class="secondary">Open the lesson</button>
+        <button type="button" id="back" class="primary">Back to tasks</button>
+      </div>
+    </section>
+
+    <p id="status" class="status" role="status" hidden></p>
+  </main>
+
+  <footer class="bottom">
+    <details id="settings">
+      <summary>Settings</summary>
+      <form id="settings-form" autocomplete="off">
+        <label for="server">Aasan address</label>
+        <input id="server" type="url" placeholder="https://aasan.example.com" required>
+        <p class="small muted">Must start with https:// (or http://localhost while developing).</p>
+        <button type="submit" class="secondary">Save</button>
+      </form>
+    </details>
+    <button type="button" class="link danger" id="disconnect" hidden>Disconnect</button>
+  </footer>
+
+  <script src="lib.js"></script>
+  <script src="steps.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

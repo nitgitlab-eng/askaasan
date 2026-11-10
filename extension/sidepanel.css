@@ -1,0 +1,12 @@
+body.panel { width: auto; max-height: none; min-height: 100vh; }
+.title { font-size: 15px; margin: 0 0 4px; }
+.next { margin: 0 0 8px; font-weight: 600; color: var(--accent); }
+.obs-steps { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.obs-steps li { display: flex; gap: 8px; align-items: flex-start; border: 2px solid var(--line); border-radius: 12px; padding: 8px; background: var(--surface); }
+.obs-steps li.ok { border-color: var(--good); }
+.obs-steps li.current { border-color: var(--accent); }
+.obs-steps .mark { font-weight: 800; min-width: 1.4em; text-align: center; }
+.obs-steps li.ok .mark { color: var(--good); }
+.obs-steps .label { margin: 0; font-weight: 600; }
+.obs-steps .detail { margin: 2px 0 0; font-size: 12px; color: var(--muted); word-break: break-all; }
+.done { margin-top: 12px; border: 2px solid var(--good); border-radius: 14px; padding: 10px; background: var(--surface); }

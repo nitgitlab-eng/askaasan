@@ -1,0 +1,37 @@
+# What wakes someone up. Thresholds are starting points; tune them after a few weeks of real traffic.
+groups:
+  - name: aasan
+    rules:
+      - alert: ApiDown
+        expr: up{job="aasan-api"} == 0
+        for: 2m
+        annotations: { summary: "The API isn't answering /api/metrics/ (container down or overloaded)." }
+      - alert: CeleryQueueBackedUp
+        expr: aasan_celery_queue_length > 200
+        for: 10m
+        annotations: { summary: "{{ $value }} background jobs waiting: the worker is stuck or too slow." }
+      - alert: CeleryTasksFailing
+        expr: sum(increase(aasan_celery_task_failures_total[15m])) > 10
+        annotations: { summary: "More than 10 background jobs failed in 15 minutes. Check the worker logs in Grafana." }
+      - alert: DiskAlmostFull
+        expr: aasan_disk_free_bytes / aasan_disk_total_bytes < 0.2
+        for: 15m
+        annotations: { summary: "Less than 20% disk left on the media volume." }
+      - alert: RedisMemoryHigh
+        expr: aasan_redis_used_memory_bytes / aasan_redis_maxmemory_bytes > 0.7 and aasan_redis_maxmemory_bytes > 0
+        for: 10m
+        annotations: { summary: "Redis {{ $labels.role }} is over 70% of its memory. The broker refuses work when full." }
+      - alert: RedisDown
+        expr: aasan_redis_up == 0
+        for: 2m
+        annotations: { summary: "Redis {{ $labels.role }} isn't answering." }
+      - alert: DatabaseConnectionsHigh
+        expr: aasan_db_connections / aasan_db_max_connections > 0.8
+        for: 10m
+        annotations: { summary: "Postgres is over 80% of max_connections." }
+      - alert: AiProviderErrors
+        expr: sum by (provider) (increase(aasan_llm_errors_total{code=~"rate_limited|provider_error|provider_unreachable"}[10m])) > 20
+        annotations: { summary: "{{ $labels.provider }}: more than 20 AI errors in 10 minutes (rate limit, outage or spend cap)." }
+      - alert: WebhookFailures
+        expr: aasan_webhook_failures_last_hour > 20
+        annotations: { summary: "Organisation webhooks are failing ({{ $value }} in the last hour)." }

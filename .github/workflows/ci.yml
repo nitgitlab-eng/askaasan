@@ -1,0 +1,218 @@
+name: CI
+on:
+  # Pushes to main, plus every pull request. Feature-branch pushes are covered by their PR, so nothing runs twice.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: api } }
+    env:
+      # CI-only, not a real secret. 32+ bytes so the JWT HMAC key meets HS256's minimum (no InsecureKeyLengthWarning).
+      DJANGO_SECRET_KEY: ci-only-not-a-secret-0123456789abcdef-0123456789abcdef
+      # CI-only Fernet key for stored provider/SMTP secrets in tests (stored secrets no longer fall back to SECRET_KEY).
+      AASAN_SECRETS_KEY: KPXJyj4_qm_XwKaI4LPIZOrIt_SAhn5Fl8o-Fjxd-iM=
+      LLM_FORCE_PROVIDER: fake
+      # The suite runs like local dev (api/.env.example sets DJANGO_DEBUG=true). Without it settings fail closed to
+      # production mode and every plain-HTTP test request gets a 301 to https. The deploy check below overrides it.
+      DJANGO_DEBUG: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { python-version: "3.12" }
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run python manage.py makemigrations --check --dry-run
+      - name: Deployment checks (production-like settings)
+        run: uv run python manage.py check --deploy --fail-level WARNING
+        env:
+          DJANGO_DEBUG: "false"
+          DJANGO_ALLOWED_HOSTS: aasan.example.com
+          FRONTEND_URL: https://aasan.example.com
+          DJANGO_HSTS_SECONDS: "31536000"
+          DJANGO_HSTS_SUBDOMAINS: "true"
+      # Coverage is gated: measured 91.3% (Oct 2026), floor = floor(measured) - 1. Raise the floor as coverage grows;
+      # never lower it to land a change. pytest-cov is pulled in for this run only.
+      - run: >-
+          uv run --with pytest-cov pytest -q --cov=apps --cov=config --cov=llm
+          --cov-report=term-missing:skip-covered --cov-fail-under=90
+      # Static security scan of the API source (tests and migrations excluded; config in pyproject.toml [tool.bandit]).
+      # Medium+ severity at medium+ confidence fails the build. Reviewed false positives carry `# nosec BXXX`.
+      - name: Static security scan (bandit)
+        run: uv run bandit -c pyproject.toml -r . --severity-level medium --confidence-level medium -q
+      # Known-vulnerable dependencies fail the build. --no-deps: the export is already the full pinned set (and
+      # --disable-pip refuses unhashed requirements without it). Ignored: twisted and autobahn come only with daphne,
+      # the dev server and opt-in fallback (production serves with gunicorn + uvicorn), and have no stable fix yet.
+      # Remove each ignore as soon as a fixed release lands (Dependabot opens the PR).
+      - name: Dependency audit
+        run: |
+          uv export --frozen --no-hashes --format requirements-txt > /tmp/req.txt
+          uvx pip-audit -r /tmp/req.txt --disable-pip --no-deps \
+            --ignore-vuln PYSEC-2026-4027 \
+            --ignore-vuln CVE-2026-106454 --ignore-vuln CVE-2026-115778 --ignore-vuln CVE-2026-115774 \
+            --ignore-vuln CVE-2026-115775 --ignore-vuln CVE-2026-115776 --ignore-vuln CVE-2026-115877 \
+            --ignore-vuln CVE-2026-83813
+
+  # SQLite ignores select_for_update and some constraint behaviour; the locking fixes need Postgres to be meaningful.
+  api-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: api } }
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: aasan, POSTGRES_PASSWORD: ci-only-postgres, POSTGRES_DB: aasan }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aasan" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: ci-only-not-a-secret-0123456789abcdef-0123456789abcdef
+      # CI-only Fernet key for stored provider/SMTP secrets in tests (stored secrets no longer fall back to SECRET_KEY).
+      AASAN_SECRETS_KEY: KPXJyj4_qm_XwKaI4LPIZOrIt_SAhn5Fl8o-Fjxd-iM=
+      LLM_FORCE_PROVIDER: fake
+      DJANGO_DEBUG: "true"  # as in the api job: local-dev mode, so test requests aren't redirected to https
+      DATABASE_URL: postgres://aasan:ci-only-postgres@localhost:5432/aasan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { python-version: "3.12" }
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      # `pnpm build` runs `tsc -b` and then `vite build`, so the type check is not repeated as a separate step.
+      - run: pnpm build
+      # The Playwright specs are TypeScript too; they are type-checked here and run in the `e2e` job.
+      - run: pnpm e2e:typecheck
+      # High and critical advisories in shipped (prod) dependencies fail the build.
+      - name: Dependency audit
+        run: pnpm audit --prod --audit-level high
+
+  # Every feature end to end in a real browser (Chromium): the API on the fake AI provider plus the Vite dev server,
+  # exactly how a developer runs `pnpm e2e` locally. One retry absorbs the odd SQLite write-lock on a busy runner.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DJANGO_SECRET_KEY: ci-only-not-a-secret-0123456789abcdef-0123456789abcdef
+      AASAN_SECRETS_KEY: KPXJyj4_qm_XwKaI4LPIZOrIt_SAhn5Fl8o-Fjxd-iM=
+      LLM_FORCE_PROVIDER: fake
+      DJANGO_DEBUG: "true"
+      E2E_RETRIES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { python-version: "3.12" }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - run: uv sync --frozen
+        working-directory: api
+      - run: uv run python manage.py migrate --noinput
+        working-directory: api
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm e2e:install
+        working-directory: web
+      - name: Start the API (fake AI) and the dev server
+        run: |
+          (cd api && nohup uv run python manage.py runserver 127.0.0.1:8000 > /tmp/api.log 2>&1 &)
+          (cd web && nohup pnpm dev > /tmp/web.log 2>&1 &)
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/api/health/ >/dev/null && curl -sf http://localhost:5173/ >/dev/null && exit 0
+            sleep 2
+          done
+          echo "servers did not start"; tail -50 /tmp/api.log /tmp/web.log; exit 1
+      - run: pnpm e2e
+        working-directory: web
+      - name: Server logs (on failure)
+        if: failure()
+        run: tail -200 /tmp/api.log /tmp/web.log
+      - name: Playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: playwright-report, path: web/e2e/report, retention-days: 7 }
+
+  # Build both production images the way docker-compose.yml does, and check the nginx config inside the web image.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f infra/api.Dockerfile -t aasan-api:ci api
+      - run: docker build -f infra/web.Dockerfile -t aasan-web:ci .
+      # nginx resolves proxy_pass hosts at config-test time; point "api" at loopback so the test needs no running stack.
+      - run: docker run --rm --add-host api:127.0.0.1 aasan-web:ci nginx -t
+      - name: API image starts as non-root and passes Django checks
+        run: |
+          test "$(docker run --rm aasan-api:ci id -u)" != "0"
+          docker run --rm -e DJANGO_SECRET_KEY=ci-only-not-a-secret-0123456789abcdef-0123456789abcdef aasan-api:ci python manage.py check
+      # OS and library CVEs in the shipped images: high and critical ones with a fix available fail the build.
+      # The SBOMs are written first, so they are uploaded even when the scan fails.
+      - name: Image SBOMs (CycloneDX) and vulnerability scan (Trivy)
+        run: |
+          mkdir -p sbom
+          # One cache volume for all four runs: the vulnerability and Java DBs download once.
+          trivy="docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/trivy"
+          for image in aasan-api aasan-web; do
+            $trivy -v "$PWD/sbom:/sbom" aquasec/trivy:0.58.1 \
+              image --format cyclonedx --output "/sbom/$image.cdx.json" --no-progress "$image:ci"
+          done
+          for image in aasan-api aasan-web; do
+            $trivy aquasec/trivy:0.58.1 image \
+              --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$image:ci"
+          done
+      - name: Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: sbom-cyclonedx, path: sbom/, retention-days: 30, if-no-files-found: warn }
+
+  # Committed secrets, over the full history. Pinned CLI, checksum-verified. Allowlists live in .gitleaks.toml.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+      - name: Secret scan (gitleaks)
+        run: /tmp/gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --exit-code 1
+
+  extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node --test extension/test/*.test.js

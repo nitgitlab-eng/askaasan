@@ -1,0 +1,15 @@
+# Load-test overlay: no paid AI. The fake provider answers with real-model latency (time to first token, then a delay
+# per streamed chunk), so sockets and workers are held as long as they would be in production.
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.loadtest.yml up --build -d   (TAG=dev in infra/.env)
+x-loadtest-env: &loadtest-env
+  LLM_FORCE_PROVIDER: fake
+  LLM_FAKE_DELAY_MS: "${LLM_FAKE_DELAY_MS:-800}"
+  LLM_FAKE_TOKEN_MS: "${LLM_FAKE_TOKEN_MS:-30}"
+
+services:
+  api:
+    environment: *loadtest-env
+  worker:
+    environment: *loadtest-env
+  beat:
+    environment: *loadtest-env

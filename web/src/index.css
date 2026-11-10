@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+/* Theme tokens. data-theme on <html> picks a palette; --accent comes from prefs. */
+:root {
+  --bg: #fff8f0;
+  --surface: #ffffff;
+  --surface-2: #fff1e3;
+  --text: #2a1d12;
+  --muted: #7a6656;
+  --border: #f1dcc6;
+  --accent: #f97316;
+  --accent-ink: #ffffff;
+  --good: #16a34a;
+  --bad: #dc2626;
+  --font-body: "Mukta Malar", "Noto Sans Tamil", system-ui, sans-serif;
+  --font-display: "Baloo Thambi 2", "Mukta Malar", system-ui, sans-serif;
+  --scale: 1;
+  --pattern: none;
+}
+[data-theme="dark"] {
+  --bg: #14110f; --surface: #1e1a17; --surface-2: #2a2420; --text: #f5ece3;
+  --muted: #b5a291; --border: #3a322b;
+}
+/* Until main.tsx sets data-theme, a dark device gets the dark palette (no white flash before JS runs). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #14110f; --surface: #1e1a17; --surface-2: #2a2420; --text: #f5ece3;
+    --muted: #b5a291; --border: #3a322b;
+  }
+}
+[data-theme="kolam"] {
+  --bg: #fffaf2; --surface: #ffffff; --surface-2: #fdf0dc; --text: #3b1f0e; --muted: #85664a; --border: #f0d9b5;
+  --pattern: radial-gradient(circle at 12px 12px, #e9c79a 1.6px, transparent 1.8px);
+}
+[data-theme="temple"] {
+  --bg: #fdf3e1; --surface: #fffaf0; --surface-2: #f8e3bd; --text: #4a1c0a; --muted: #8b5a35; --border: #e8c58e;
+  --pattern: repeating-linear-gradient(45deg, #f1d7a8 0 2px, transparent 2px 22px);
+}
+[data-theme="ocean"] {
+  --bg: #eef8fb; --surface: #ffffff; --surface-2: #dcf0f6; --text: #0c2d3a; --muted: #4f7482; --border: #c4e3ec;
+}
+[data-theme="night_study"] {
+  --bg: #0d1326; --surface: #151d36; --surface-2: #1f2a4a; --text: #e8ecff; --muted: #9aa6d1; --border: #2b3863;
+  --pattern: radial-gradient(circle at 30px 40px, #ffffff22 1px, transparent 1.2px);
+}
+[data-font="noto"] { --font-body: "Noto Sans Tamil", system-ui, sans-serif; }
+[data-font="catamaran"] { --font-body: "Catamaran", "Noto Sans Tamil", system-ui, sans-serif; }
+[data-font="dyslexic"] { --font-body: "Atkinson Hyperlegible", "Noto Sans Tamil", system-ui, sans-serif; }
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+html {
+  font-size: calc(16px * var(--scale));
+  background: var(--bg);
+  color: var(--text);
+}
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font-family: var(--font-body);
+  line-height: 1.65; /* Tamil glyphs need generous leading */
+  background-color: var(--bg);
+  background-image: var(--pattern);
+  background-size: 24px 24px;
+  -webkit-font-smoothing: antialiased;
+}
+[data-reduced-motion="true"] *,
+[data-reduced-motion="true"] *::before,
+[data-reduced-motion="true"] *::after {
+  animation-duration: 0.001ms !important;
+  transition-duration: 0.001ms !important;
+}
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+.prose-chat p { margin: 0.35em 0; }
+.prose-chat img { display: block; max-width: 100%; max-height: 420px; margin: 0.8em auto; border-radius: 1rem; border: 1px solid var(--border); }
+.prose-chat h1, .prose-chat h2, .prose-chat h3, .prose-chat h4 { font-family: var(--font-display); font-weight: 700; line-height: 1.3; margin: 0.9em 0 0.3em; }
+.prose-chat h1 { font-size: 1.35em; }
+.prose-chat h2 { font-size: 1.2em; }
+.prose-chat h3, .prose-chat h4 { font-size: 1.08em; color: var(--accent); }
+.prose-chat strong { font-weight: 700; }
+.prose-chat blockquote { border-left: 4px solid var(--accent); padding-left: 0.75rem; color: var(--muted); }
+.prose-chat table { border-collapse: collapse; font-size: 0.9em; }
+.prose-chat th, .prose-chat td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
+.prose-chat pre { background: var(--surface-2); padding: 0.75rem; border-radius: 0.75rem; overflow-x: auto; font-size: 0.875rem; }
+.prose-chat code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+.prose-chat ul, .prose-chat ol { padding-left: 1.25rem; margin: 0.35em 0; }
+.prose-chat ul { list-style: disc; }
+.prose-chat ol { list-style: decimal; }
+
+/* NPS diverging pair (validated: CVD ΔE ≥ 19, contrast ≥ 3:1 in light and dark). Neutral = palette midpoint. */
+.nps-neg { background: #e34948; }
+.nps-mid { background: #d3d1cb; }
+.nps-pos { background: #2a78d6; }
+[data-theme="dark"] .nps-neg, [data-theme="night_study"] .nps-neg { background: #e66767; }
+[data-theme="dark"] .nps-mid, [data-theme="night_study"] .nps-mid { background: #383835; }
+[data-theme="dark"] .nps-pos, [data-theme="night_study"] .nps-pos { background: #3987e5; }
+
+/* Print / "Save as PDF" (quarterly review etc.): just the content, on white. */
+@media print {
+  aside, .print-hide, main > .sticky, [class~="fixed"] { display: none !important; }
+  body { background: #fff !important; --pattern: none; }
+}
+
+/* Explainer video scenes */
+@keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }

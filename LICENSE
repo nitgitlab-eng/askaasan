@@ -1,0 +1,24 @@
+Aasan (ஆசான்) — Proprietary Software License
+
+Copyright (c) 2026 Nandha Infotech. All rights reserved.
+
+This software, including its source code, documentation, designs, mascot
+artwork, prompts and translations (the "Software"), is the confidential and
+proprietary property of Nandha Infotech.
+
+No part of the Software may be used, copied, modified, merged, published,
+distributed, sublicensed, hosted for third parties or sold, in whole or in
+part, without the prior written permission of Nandha Infotech.
+
+Access to this repository does not grant any licence, express or implied,
+other than the right to view the Software for the purpose for which access
+was granted.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
+NANDHA INFOTECH BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING
+FROM OR IN CONNECTION WITH THE SOFTWARE.
+
+Third-party packages bundled through the lockfiles (uv.lock, pnpm-lock.yaml)
+remain under their own licences.

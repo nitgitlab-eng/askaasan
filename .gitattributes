@@ -1,0 +1,16 @@
+# Keep Unix line endings for everyone (Windows too): the shell scripts and configs run inside Linux containers.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.mp3 binary
+*.wav binary
+*.onnx binary
+*.ttf binary
+*.otf binary

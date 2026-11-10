@@ -1,0 +1,70 @@
+# Overlay for hosts that run the stack on Podman instead of Docker (e.g. a cPanel server, where Docker CE would remove
+# cPanel's own Podman packages). Use it on top of the main file, through Podman's Docker-compatible socket:
+#
+#   export DOCKER_HOST=unix:///run/podman/podman.sock
+#   docker-compose -f infra/docker-compose.yml -f infra/docker-compose.podman.yml up -d --no-build
+#
+# Why: Podman (CNI networking, no dnsmasq) gives containers no DNS for each other's names, and has no Docker DNS at
+# 127.0.0.11 for nginx. So every service gets a fixed address on its own subnet, every container gets the service
+# names in its /etc/hosts, and nginx uses infra/nginx/default.podman.conf, which points at the fixed API address.
+# Every service has a fixed address, so nothing is handed out automatically. No `ip_range` here: Podman's CNI
+# network refuses fixed addresses that fall outside it ("failed to allocate all requested IPs").
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.89.77.0/24
+          gateway: 10.89.77.1
+
+x-hosts: &hosts
+  - "db:10.89.77.10"
+  - "redis:10.89.77.11"
+  - "redis-cache:10.89.77.12"
+  - "mailpit:10.89.77.13"
+  - "api:10.89.77.21"
+  - "web:10.89.77.30"
+  - "livekit:10.89.77.40"
+
+services:
+  db:
+    networks: { default: { ipv4_address: 10.89.77.10 } }
+    extra_hosts: *hosts
+  redis:
+    networks: { default: { ipv4_address: 10.89.77.11 } }
+    extra_hosts: *hosts
+  redis-cache:
+    networks: { default: { ipv4_address: 10.89.77.12 } }
+    extra_hosts: *hosts
+  mailpit:
+    networks: { default: { ipv4_address: 10.89.77.13 } }
+    extra_hosts: *hosts
+  migrate:
+    networks: { default: { ipv4_address: 10.89.77.20 } }
+    extra_hosts: *hosts
+  api:
+    networks: { default: { ipv4_address: 10.89.77.21 } }
+    extra_hosts: *hosts
+    # Podman joins an exec-form ("CMD") health check into one line and re-splits it on spaces, so `python -c "<code>"`
+    # reaches Python as just `import` (SyntaxError) and the API never turns healthy. The shell form passes intact.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready/', timeout=8)\""]
+  worker:
+    networks: { default: { ipv4_address: 10.89.77.22 } }
+    extra_hosts: *hosts
+  beat:
+    networks: { default: { ipv4_address: 10.89.77.23 } }
+    extra_hosts: *hosts
+  web:
+    networks: { default: { ipv4_address: 10.89.77.30 } }
+    extra_hosts: *hosts
+    volumes:
+      - ./nginx/default.podman.conf:/etc/nginx/conf.d/default.conf:ro
+  livekit:
+    networks: { default: { ipv4_address: 10.89.77.40 } }
+    extra_hosts: *hosts
+  voice-agent:
+    networks: { default: { ipv4_address: 10.89.77.41 } }
+    extra_hosts: *hosts
+    healthcheck:  # shell form, same reason as api
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/', timeout=4)\""]

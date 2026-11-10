@@ -1,0 +1,9 @@
+<!doctype html>
+<!-- Python runner for code activities (src/activities/pyodide.ts). Loaded only as
+     <iframe sandbox="allow-scripts" src="/pyodide/runner.html">. nginx (location /pyodide/) gives this page its own
+     CSP, the only place on the site that allows 'unsafe-eval'. The v0.26.4/ runtime is copied from the `pyodide` npm
+     package by vite.config.ts (selfHostPyodide), which fails the build if this version and package.json disagree. -->
+<meta charset="utf-8" />
+<title>Python</title>
+<script src="v0.26.4/pyodide.js"></script>
+<script src="runner.js"></script>

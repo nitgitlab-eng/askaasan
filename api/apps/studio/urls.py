@@ -1,0 +1,35 @@
+from django.urls import path
+
+from . import api, export_api
+
+urlpatterns = [
+    path("courses/<int:pk>/history/", api.course_history),
+    path("courses/<int:pk>/undo/", api.course_undo),
+    path("courses/<int:pk>/redo/", api.course_redo),
+    path("courses/<int:pk>/versions/", api.course_versions),
+    path("courses/<int:pk>/versions/<int:rid>/", api.course_version),
+    path("courses/<int:pk>/template/", api.course_template),
+    path("courses/<int:pk>/export/", api.course_export),
+    path("courses/<int:pk>/export.pptx", export_api.course_pptx),
+    path("courses/<int:pk>/preset/", api.course_preset),
+    path("courses/<int:pk>/documents/", api.course_documents),
+    path("courses/<int:pk>/research/", api.course_research),
+    path("courses/<int:pk>/chat/", api.course_chat),
+    path("courses/<int:pk>/chat/apply/", api.course_chat_apply),
+    path("templates/", api.templates),
+    path("templates/<int:pk>/use/", api.use_template),
+    path("lesson-library/", api.lesson_library),
+    path("sections/<int:pk>/import-lesson/", api.import_lesson),
+    path("import/", api.course_import),
+    path("presets/", api.presets),
+    path("presets/<int:pk>/", api.preset_detail),
+    path("subsections/<int:pk>/lectures/", api.lectures),
+    path("lectures/<int:lid>/", api.lecture_detail),
+    path("lectures/<int:lid>/build/", api.lecture_build),
+    path("exports/orgs/<slug:slug>/analytics.xlsx", export_api.org_analytics_xlsx),
+    path("exports/orgs/<slug:slug>/surveys/<int:pk>.xlsx", export_api.survey_xlsx),
+    path("exports/admin/overview.xlsx", export_api.admin_overview_xlsx),
+    path("exports/progress.xlsx", export_api.progress_xlsx),
+    path("review/", export_api.quarterly_review),
+    path("review.xlsx", export_api.quarterly_review_xlsx),
+]

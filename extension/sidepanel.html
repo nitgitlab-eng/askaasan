@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Aasan Companion — watching</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body class="panel">
+  <header class="top">
+    <img src="icons/icon32.png" alt="" width="24" height="24">
+    <h1>Aasan Companion</h1>
+  </header>
+
+  <main>
+    <section id="idle">
+      <p class="lead">Nothing is being watched.</p>
+      <p class="muted small">Open the Aasan Companion popup and choose <b>Watch steps</b> on a task. The extension then ticks
+        each step as you do it — only on that task's websites.</p>
+    </section>
+
+    <section id="watching" hidden>
+      <h2 id="task-title" class="title"></h2>
+      <p id="next" class="next" role="status" aria-live="polite"></p>
+      <ol id="step-list" class="obs-steps"></ol>
+      <p id="sites" class="small muted"></p>
+      <div class="row">
+        <button type="button" id="check" class="secondary">Check this page now</button>
+        <button type="button" id="stop" class="secondary">Stop watching</button>
+      </div>
+      <div id="done" class="done" hidden>
+        <p class="lead">All steps observed ✓</p>
+        <p class="small muted">Sending shares this tab's address, title and a screenshot of what you can see with Aasan for marking.
+          Hide passwords and personal details first.</p>
+        <button type="button" id="send" class="primary">Send for marking</button>
+      </div>
+    </section>
+
+    <section id="result" hidden>
+      <div id="result-card" class="result">
+        <p id="result-score" class="score"></p>
+        <p id="result-verdict" class="verdict"></p>
+        <p id="result-feedback"></p>
+      </div>
+      <div class="row"><button type="button" id="result-close" class="secondary">Done</button></div>
+    </section>
+
+    <p id="status" class="status" role="status" hidden></p>
+  </main>
+
+  <script src="lib.js"></script>
+  <script src="steps.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

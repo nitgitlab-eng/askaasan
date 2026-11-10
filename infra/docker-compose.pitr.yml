@@ -1,0 +1,112 @@
+# OPTIONAL overlay: continuous WAL archiving + daily base backups with WAL-G, for point-in-time recovery (PITR).
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.pitr.yml up -d --build
+#
+# Nightly infra/backup.sh dumps alone can lose up to a day of data (RPO 24h). With this overlay Postgres ships every
+# finished WAL segment to S3-compatible storage (AWS S3, Cloudflare R2, Backblaze B2, MinIO...), and forces a segment
+# switch at least every 5 minutes (archive_timeout), so the worst-case loss drops to about 5 minutes. The
+# `walg-backup` sidecar takes a full base backup daily; a restore replays WAL on top of the newest base backup up to
+# any moment you choose. Keep running infra/backup.sh as well: a logical dump is the portable, easy-to-inspect copy.
+#
+# This is the self-hosted path. The alternative is managed Postgres with PITR built in (AWS RDS / Aurora, Google
+# Cloud SQL, Azure Flexible Server, Neon, Crunchy Bridge, DigitalOcean): point DATABASE_URL at it, drop the `db`
+# service and skip this file.
+#
+# Settings (infra/.env; see infra/.env.example):
+#   WALG_S3_PREFIX            s3://bucket/path for this server (required), e.g. s3://aasan-wal/prod
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   a key that can read and write only that bucket (required)
+#   AWS_REGION                e.g. ap-south-1, or `auto` for R2
+#   AWS_ENDPOINT              for non-AWS storage, e.g. https://<account>.r2.cloudflarestorage.com
+#   AWS_S3_FORCE_PATH_STYLE   true for MinIO and some S3-compatible stores
+#   WALG_PGP_KEY_PATH         optional but recommended: client-side encryption of WAL and base backups. Put the
+#                             armored PGP *public* key in infra/walg-keys/pgp.pub (mounted read-only at /etc/walg)
+#                             and set WALG_PGP_KEY_PATH=/etc/walg/pgp.pub. Keep the private key off this server.
+#   WALG_RETAIN_FULL          base backups to keep (default 7)
+#
+# If archiving fails (bad key, bucket down) Postgres keeps the WAL on local disk and retries; it does not lose data,
+# but pg_wal grows until archiving works again. Watch `docker compose logs db` for "archive command failed".
+# Restore steps are in docs/DEPLOY.md, section 7.
+
+x-walg-env: &walg-env
+  WALG_S3_PREFIX: "${WALG_S3_PREFIX:?set WALG_S3_PREFIX in infra/.env for the PITR overlay}"
+  AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID in infra/.env for the PITR overlay}"
+  AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY in infra/.env for the PITR overlay}"
+  AWS_REGION: "${AWS_REGION:-us-east-1}"
+  AWS_ENDPOINT: "${AWS_ENDPOINT:-}"
+  AWS_S3_FORCE_PATH_STYLE: "${AWS_S3_FORCE_PATH_STYLE:-false}"
+  WALG_PGP_KEY_PATH: "${WALG_PGP_KEY_PATH:-}"  # empty values are dropped by the wal-g wrapper in the image
+  WALG_COMPRESSION_METHOD: lz4
+  WALG_UPLOAD_CONCURRENCY: "4"
+  PGDATA: /var/lib/postgresql/data
+
+services:
+  db:
+    build: ./postgres-walg
+    image: aasan-postgres-walg:16
+    environment:
+      <<: *walg-env
+    volumes:
+      - ./walg-keys:/etc/walg:ro
+    # Compose replaces `command` wholesale, so the tuning from docker-compose.yml is repeated here; keep them in sync.
+    command:
+      - postgres
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-300}
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-4GB}
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - idle_in_transaction_session_timeout=60000
+      # ── PITR ──
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=wal-g wal-push %p
+      - -c
+      - archive_timeout=300   # switch WAL at least every 5 min, so an idle-ish site still has RPO ≈ 5 min
+
+  # Daily full base backup + retention. Reads the data volume read-only and talks to Postgres over the network.
+  # Instead of this sidecar you can run it from host cron:
+  #   30 3 * * *  cd /srv/aasan && docker compose -f infra/docker-compose.yml -f infra/docker-compose.pitr.yml \
+  #                 exec -T -u postgres db wal-g backup-push /var/lib/postgresql/data
+  walg-backup:
+    build: ./postgres-walg
+    image: aasan-postgres-walg:16
+    depends_on:
+      db: {condition: service_healthy}
+    user: postgres
+    entrypoint: ["/usr/local/bin/walg-basebackup.sh"]
+    environment:
+      <<: *walg-env
+      PGHOST: db
+      PGUSER: aasan
+      PGDATABASE: aasan
+      PGPASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}"
+      WALG_RETAIN_FULL: "${WALG_RETAIN_FULL:-7}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data:ro
+      - ./walg-keys:/etc/walg:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$$(find /tmp/walg-last-ok -mmin -1560 2>/dev/null)\""]
+      interval: 10m
+      timeout: 10s
+      start_period: 2h
+      retries: 1
+    restart: unless-stopped

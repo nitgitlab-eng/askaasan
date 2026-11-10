@@ -1,0 +1,74 @@
+# Staging overlay: the production stack with no paid AI, Razorpay in test mode, its own project name (so its own
+# containers, network and volumes), its own ports and a smaller memory profile. It runs the same released images as
+# production, so what passed on staging is byte-for-byte what gets promoted.
+#   cp infra/staging.env.example infra/staging.env      # fill in passwords, TAG, AASAN_IMAGE_PREFIX, Razorpay test keys
+#   (api/.env.staging: its own DJANGO_SECRET_KEY / AASAN_SECRETS_KEY; see docs/DEPLOY.md, "Staging and release runbook")
+#   S="docker compose --env-file infra/staging.env -f infra/docker-compose.yml -f infra/docker-compose.staging.yml"
+#   $S pull && $S up -d --no-build
+# Live voice is off on staging unless STAGING_LIVEKIT_URL is set (and then run it on a host without production's LiveKit).
+name: aasan-staging
+
+x-staging-env: &staging-env
+  # Never a paid model: every AI feature answers from the canned fake provider.
+  LLM_FORCE_PROVIDER: fake
+  # Razorpay test keys only (rzp_test_...). Empty = billing off. These override whatever api/.env.staging says, so a
+  # live key can't reach staging by copy-paste; the app also refuses live keys until "Allow live payments" is on.
+  RAZORPAY_KEY_ID: "${STAGING_RAZORPAY_KEY_ID:-}"
+  RAZORPAY_KEY_SECRET: "${STAGING_RAZORPAY_KEY_SECRET:-}"
+  RAZORPAY_WEBHOOK_SECRET: "${STAGING_RAZORPAY_WEBHOOK_SECRET:-}"
+  LIVEKIT_URL: "${STAGING_LIVEKIT_URL:-}"
+  # Small pools for a small box.
+  DB_POOL_MIN: "1"
+  DB_POOL_MAX: "${DB_POOL_MAX:-4}"
+
+x-staging-app: &staging-app
+  env_file: !override
+    - "${STAGING_API_ENV_FILE:-../api/.env.staging}"
+
+services:
+  db:
+    mem_limit: ${STAGING_DB_MEMORY:-1g}
+    shm_size: 128mb
+  redis:
+    mem_limit: ${STAGING_REDIS_MEMORY:-192m}
+  redis-cache:
+    mem_limit: ${STAGING_REDIS_CACHE_MEMORY:-128m}
+  mailpit:
+    ports: !override
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8026}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1026}:1025"
+    mem_limit: 128m
+  migrate:
+    <<: *staging-app
+    environment:
+      <<: *staging-env
+      DB_POOL_MAX: "2"
+    mem_limit: 512m
+  api:
+    <<: *staging-app
+    environment:
+      <<: *staging-env
+      WEB_CONCURRENCY: "${WEB_CONCURRENCY:-2}"
+    mem_limit: ${STAGING_API_MEMORY:-1g}
+  worker:
+    <<: *staging-app
+    environment:
+      <<: *staging-env
+      CELERY_CONCURRENCY: "${CELERY_CONCURRENCY:-2}"
+      DB_POOL_MAX: "2"
+    mem_limit: ${STAGING_WORKER_MEMORY:-768m}
+  beat:
+    <<: *staging-app
+    environment:
+      <<: *staging-env
+      DB_POOL_MAX: "2"
+    mem_limit: 256m
+  voice-agent:
+    <<: *staging-app
+    environment: *staging-env
+    mem_limit: ${VOICE_AGENT_MEMORY:-1g}
+  web:
+    # Production's nginx is on 8080; staging defaults to 8090 (put its own HTTPS host name in front, e.g. Caddy).
+    ports: !override
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8090}:80"
+    mem_limit: 128m
