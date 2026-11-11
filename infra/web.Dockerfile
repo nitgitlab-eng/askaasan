@@ -7,7 +7,7 @@ RUN pnpm install --frozen-lockfile
 COPY web/ .
 RUN pnpm build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 # The 1.27 tag no longer gets rebuilds, so its Alpine packages (openssl, curl, musl, ...) go stale; take the fixed
 # versions from the Alpine repo at build time (CI's Trivy scan fails on HIGH/CRITICAL CVEs that have a fix).
 RUN apk upgrade --no-cache
