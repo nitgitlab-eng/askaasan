@@ -1,6 +1,6 @@
 # Django API image (gunicorn + uvicorn workers; daphne kept as a fallback), also used by the Celery worker/beat and the one-shot migrate job.
 # Build context: api/ (see docker-compose.yml); api/.dockerignore keeps .env, the local DB, media and .venv out.
-FROM python:3.12-slim
+FROM python:3.15-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
